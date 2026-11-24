@@ -28,7 +28,9 @@
 //   recomp_prc_reset()                   ends every process's thread (the scheduler's init)
 //
 // And for the game's own code, mp_prc_started(): the keys of the processes that have started, which hold state on a
-// native stack, so that a game knows when a snapshot of RDRAM holds all of its state.
+// native stack, so that a game knows when a snapshot of RDRAM holds all of its state; and mp_prc_end(key): ends that
+// process's thread without running any more of it, as recomp_prc_reset ends them all, so that a game taking up a
+// snapshot in which the process hasn't started (or is another) starts it afresh, from RDRAM, at its next resume.
 //
 // Built with MP_PROCESS_STATS (CMake option of that name), it prints every 5 seconds how many processes are alive, how
 // many resumes a second the scheduler makes, and what a resume costs beyond the process's own run: two handoffs.
@@ -249,6 +251,20 @@ std::vector<uint32_t> mp_prc_started() {
         keys.push_back(key);
     }
     return keys;
+}
+
+void mp_prc_end(uint32_t key) {
+    Worker* w;
+    {
+        std::lock_guard lock{ workers_mutex };
+        auto it = running.find(key);
+        if (it == running.end()) {
+            return;
+        }
+        w = it->second;
+    }
+    w->killed = true;
+    run_until_back(w);
 }
 
 extern "C" void recomp_prc_resume(uint8_t* rdram, recomp_context* ctx) {
